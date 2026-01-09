@@ -2,8 +2,8 @@
 EC2 Instance Family Micro-Benchmark (rows/s)
 
 목적
-- 인스턴스 패밀리/아키텍처(x86 vs ARM)에 따른 성능 차이를 "같은 입력 데이터"로 비교
-- CPU 연산(해시), 파일 쓰기(버퍼드/선택적 fsync), SQLite insert(기본/PRAGMA 튜닝) 측정
+- 인스턴스 패밀리/아키텍처(x86 vs ARM)에 따른 성능 차이를 비교
+- CPU 연산(해시), 파일 쓰기(버퍼드/선택적 fsync), SQLite insert(PRAGMA 튜닝) 측정
 
 출력
 - 각 테스트별 median/p95/min/max 시간 + throughput(rows/s)
@@ -28,16 +28,16 @@ from typing import List, Optional
 CSV_PATH = "sap500_data.csv"
 OUTDIR   = "."
 
-LIMIT_ROWS = 0 
+LIMIT_ROWS = 0
 REPEATS = 5                   # 반복 횟수
 WORKERS = "auto"
 
-# --- CPU 테스트 강도 (해시를 몇 번 반복할지)
+# --- CPU 테스트 강도 (해시 반복 횟수)
 CPU_ROUNDS = 30
 
 # --- 파일 쓰기 테스트 설정
 BLOCK_LINES = 5000            # buffered write block 크기
-FSYNC_LINES = 0
+FSYNC_LINES = 0               
 
 # --- SQLite insert 테스트 설정
 SQLITE_COMMIT_EVERY = 1000    # 커밋 단위
@@ -45,7 +45,7 @@ SQLITE_COMMIT_EVERY = 1000    # 커밋 단위
 
 
 # ==========================================================
-# 1) 작은 유틸리티 (시간/통계/시스템 정보)
+# 1) 유틸리티 (시간/통계/시스템 정보)
 # ==========================================================
 def now_perf():
     return time.perf_counter()
@@ -54,7 +54,6 @@ def fmt_sec(x: float) -> str:
     return f"{x:.4f}s"
 
 def percentile(values: List[float], p: float) -> float:
-    """간단한 퍼센타일 계산 (p=0.95 등)"""
     if not values:
         return float("nan")
     xs = sorted(values)
@@ -66,7 +65,6 @@ def percentile(values: List[float], p: float) -> float:
     return xs[f] + (xs[c] - xs[f]) * (k - f)
 
 def sys_info():
-    """실험 기록용: 파이썬/플랫폼/아키텍처/코어 수"""
     return {
         "python": sys.version.split()[0],
         "platform": platform.platform(),
@@ -75,7 +73,6 @@ def sys_info():
     }
 
 def summarize_times(times: List[float]) -> str:
-    """여러 번 측정한 실행 시간을 median/p95/min/max로 요약"""
     med = statistics.median(times)
     p95 = percentile(times, 0.95)
     mn = min(times)
@@ -174,12 +171,11 @@ def bench_io_write(lines: List[bytes], out_path: str, fsync_every: int, block_li
 # ==========================================================
 # 5) TEST 3: SQLite insert
 # ==========================================================
-def bench_sqlite_insert(
+def bench_sqlite_insert_pragmas(
     rows: List[List[str]],
     header: List[str],
     db_path: str,
     commit_every: int,
-    pragmas: bool
 ) -> float:
     if os.path.exists(db_path):
         os.remove(db_path)
@@ -187,12 +183,11 @@ def bench_sqlite_insert(
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
-    if pragmas:
-        cur.execute("PRAGMA journal_mode=WAL;")
-        cur.execute("PRAGMA synchronous=NORMAL;")
-        cur.execute("PRAGMA temp_store=MEMORY;")
-        cur.execute("PRAGMA cache_size=-200000;")   # ~200MB
-        cur.execute("PRAGMA mmap_size=268435456;")  # 256MB
+    cur.execute("PRAGMA journal_mode=WAL;")
+    cur.execute("PRAGMA synchronous=NORMAL;")
+    cur.execute("PRAGMA temp_store=MEMORY;")
+    cur.execute("PRAGMA cache_size=-200000;")   # ~200MB
+    cur.execute("PRAGMA mmap_size=268435456;")  # 256MB
 
     # 테이블 생성 (CSV 컬럼을 전부 TEXT로)
     col_def = ", ".join([f'"{c}" TEXT' for c in header])
@@ -253,7 +248,7 @@ def main():
     lines = build_csv_lines_bytes(data)
 
     # ------------------------------------------------------
-    # (1) CPU_HASH: CPU 연산(병렬) 측정
+    # (1) CPU_HASH
     # ------------------------------------------------------
     cpu_times = []
     for _ in range(REPEATS):
@@ -261,7 +256,7 @@ def main():
     cpu_thr = nrows / statistics.median(cpu_times)
 
     # ------------------------------------------------------
-    # (2) IO_BUFFERED_WRITE: fsync 없는 버퍼드 쓰기 처리량
+    # (2) IO_BUFFERED_WRITE
     # ------------------------------------------------------
     io_buf_times = []
     csv_buf_path = str(outdir / "bench_buffered.csv")
@@ -270,7 +265,7 @@ def main():
     io_buf_thr = nrows / statistics.median(io_buf_times)
 
     # ------------------------------------------------------
-    # (3) IO_FSYNC_WRITE: 선택 옵션 (FSYNC_LINES > 0 일 때만)
+    # (3) IO_FSYNC_WRITE
     # ------------------------------------------------------
     io_fsync_times = []
     io_fsync_thr = None
@@ -281,26 +276,15 @@ def main():
         io_fsync_thr = nrows / statistics.median(io_fsync_times)
 
     # ------------------------------------------------------
-    # (4) SQLITE_DEFAULT: 기본 설정 insert
+    # (4) SQLITE_PRAGMAS
     # ------------------------------------------------------
-    sqlite_times = []
-    db_path = str(outdir / "bench_default.db")
+    sqlite_pragmas_times = []
+    db_pragmas_path = str(outdir / "bench_pragmas.db")
     for _ in range(REPEATS):
-        sqlite_times.append(
-            bench_sqlite_insert(data.rows, data.header, db_path, commit_every=SQLITE_COMMIT_EVERY, pragmas=False)
+        sqlite_pragmas_times.append(
+            bench_sqlite_insert_pragmas(data.rows, data.header, db_pragmas_path, commit_every=SQLITE_COMMIT_EVERY)
         )
-    sqlite_thr = nrows / statistics.median(sqlite_times)
-
-    # ------------------------------------------------------
-    # (5) SQLITE_PRAGMAS: WAL/NORMAL/mmap/cache 적용 insert
-    # ------------------------------------------------------
-    sqlite_fast_times = []
-    db_fast_path = str(outdir / "bench_pragmas.db")
-    for _ in range(REPEATS):
-        sqlite_fast_times.append(
-            bench_sqlite_insert(data.rows, data.header, db_fast_path, commit_every=SQLITE_COMMIT_EVERY, pragmas=True)
-        )
-    sqlite_fast_thr = nrows / statistics.median(sqlite_fast_times)
+    sqlite_pragmas_thr = nrows / statistics.median(sqlite_pragmas_times)
 
     # (E) 결과 출력
     print("\n" + "=" * 72)
@@ -320,13 +304,10 @@ def main():
         print("  " + summarize_times(io_fsync_times))
         print(f"  throughput: {io_fsync_thr:,.2f} rows/s")
 
-    print(f"\n[SQLITE_DEFAULT (commit_every={SQLITE_COMMIT_EVERY})]")
-    print("  " + summarize_times(sqlite_times))
-    print(f"  throughput: {sqlite_thr:,.2f} rows/s")
-
     print(f"\n[SQLITE_PRAGMAS (commit_every={SQLITE_COMMIT_EVERY})]")
-    print("  " + summarize_times(sqlite_fast_times))
-    print(f"  throughput: {sqlite_fast_thr:,.2f} rows/s")
+    print("  " + summarize_times(sqlite_pragmas_times))
+    print(f"  throughput: {sqlite_pragmas_thr:,.2f} rows/s")
+
 
 if __name__ == "__main__":
     main()
