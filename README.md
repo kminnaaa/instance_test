@@ -104,9 +104,16 @@
 
 ✅ 결론: **DB 적재/쓰기 중심이면 `c6id`**, 순수 연산 중심이면 `c6g`
 
+<img width="1000" height="600" alt="benchmark_cpu_hash" src="https://github.com/user-attachments/assets/5fc17aeb-cfa9-49bc-a061-01ef3700f71b" />
+<img width="1000" height="600" alt="benchmark_io_buffered_write" src="https://github.com/user-attachments/assets/3250469b-f807-4953-ae81-63f23ab59492" />
+<img width="1000" height="600" alt="benchmark_sqlite_pragmas" src="https://github.com/user-attachments/assets/0fc390a3-086f-4e12-85cf-83d5a7198f91" />
+
+
+
 ---
 
-## 6) 왜 이런 결과가 나왔나? (설명용 슬라이드 톤)
+
+## 6) 왜 이런 결과가 나왔나?
 
 ### 💾 스토리지는 워크로드와 “궁합”이 중요
 - SQLite/파일 쓰기는 **랜덤 접근 + 메타데이터 작업**이 많아 **저지연 SSD/NVMe**가 유리
